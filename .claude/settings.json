@@ -27,7 +27,8 @@
       "Bash(curl -s \"https://data.rennesmetropole.fr/api/explore/v2.1/catalog/datasets?limit=100&q=stationnement\")",
       "Bash(curl -s \"https://data.rennesmetropole.fr/api/explore/v2.1/catalog/datasets/api-parkings-rennes-metropole/records?limit=3\")",
       "Bash(curl -s \"http://data.citedia.com/r1/parks/status\")",
-      "Bash(curl -s \"http://data.citedia.com/r1/parks\")"
+      "Bash(curl -s \"http://data.citedia.com/r1/parks\")",
+      "Bash(venv/bin/python -c \"import ast; ast.parse\\(open\\(''src/dashboard/app.py''\\).read\\(\\)\\); print\\(''Syntaxe OK''\\)\")"
     ]
   }
 }

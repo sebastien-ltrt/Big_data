@@ -1,6 +1,6 @@
 """
 Dashboard Streamlit — Parkings Rennes
-Disponibilité temps réel : parkings centre-ville (Citedia) + parcs-relais (STAR P+R)
+Visualisation temps réel : 10 parkings centre-ville (Citedia) + 8 parcs-relais (STAR P+R)
 """
 import sys
 from pathlib import Path
@@ -23,10 +23,11 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+# Auto-refresh toutes les 60 secondes
 st_autorefresh(interval=60_000, key="autorefresh")
 
 
-# ── Chargement ────────────────────────────────────────────────────────────────
+# ── Chargement des données ────────────────────────────────────────────────────
 
 @st.cache_data(ttl=60)
 def load_parkings() -> pd.DataFrame:
@@ -73,21 +74,13 @@ def to_paris(series: pd.Series) -> pd.Series:
     return pd.to_datetime(series, utc=True).dt.tz_convert(PARIS_TZ)
 
 
-# ── Sidebar ───────────────────────────────────────────────────────────────────
-
-with st.sidebar:
-    st.title("🅿️ Parkings Rennes")
-    source_filter = st.multiselect(
-        "Type de parking",
-        ["Centre-ville", "Parc-Relais"],
-        default=["Centre-ville", "Parc-Relais"],
-    )
-    show_full = st.checkbox("Masquer les parkings complets", False)
-    search    = st.text_input("Rechercher un parking", "")
-    if st.button("Rafraîchir"):
-        st.cache_data.clear()
-        st.rerun()
-    st.caption("Auto-refresh toutes les 60 s.")
+def color_status(rate):
+    if rate >= 90:
+        return "🔴"
+    elif rate >= 70:
+        return "🟡"
+    else:
+        return "🟢"
 
 
 # ── Données ───────────────────────────────────────────────────────────────────
@@ -98,217 +91,387 @@ if df.empty:
     st.error("Aucune donnée. Lancez `python src/pipeline.py`.")
     st.stop()
 
-if "type" in df.columns and source_filter:
-    df = df[df["type"].isin(source_filter)]
+df_cv = df[df["type"] == "Centre-ville"].copy()
+df_pr = df[df["type"] == "Parc-Relais"].copy()
+
+
+# ── Sidebar ───────────────────────────────────────────────────────────────────
+
+with st.sidebar:
+    st.title("🅿️ Parkings Rennes")
+    st.markdown("---")
+
+    type_filter = st.multiselect(
+        "Type de parking",
+        ["Centre-ville", "Parc-Relais"],
+        default=["Centre-ville", "Parc-Relais"],
+    )
+    show_only_open   = st.checkbox("Ouverts uniquement", True)
+    show_only_avail  = st.checkbox("Masquer les complets", False)
+    search = st.text_input("🔍 Rechercher", "")
+
+    st.markdown("---")
+    if st.button("🔄 Rafraîchir"):
+        st.cache_data.clear()
+        st.rerun()
+    st.caption("Auto-refresh toutes les 60 s.")
+
+    # Météo dans la sidebar
+    st.markdown("---")
+    st.markdown("### 🌤 Météo Rennes")
+    temp  = df["temperature_c"].iloc[0]  if "temperature_c"      in df.columns else None
+    hum   = df["humidity_pct"].iloc[0]   if "humidity_pct"        in df.columns else None
+    wind  = df["wind_speed_kmh"].iloc[0] if "wind_speed_kmh"      in df.columns else None
+    desc  = df["weather_description"].iloc[0] if "weather_description" in df.columns else None
+    if temp is not None:
+        st.metric("Température", f"{temp} °C")
+        st.metric("Humidité",    f"{hum} %")
+        st.metric("Vent",        f"{wind} km/h")
+        st.caption(str(desc) if desc else "")
+
+# Filtres
+df_filtered = df.copy()
+if type_filter:
+    df_filtered = df_filtered[df_filtered["type"].isin(type_filter)]
+if show_only_open and "is_open" in df_filtered.columns:
+    df_filtered = df_filtered[df_filtered["is_open"]]
+if show_only_avail and "is_full" in df_filtered.columns:
+    df_filtered = df_filtered[~df_filtered["is_full"]]
 if search:
-    df = df[df["name"].str.contains(search, case=False, na=False)]
-if show_full and "is_full" in df.columns:
-    df = df[~df["is_full"]]
+    df_filtered = df_filtered[df_filtered["name"].str.contains(search, case=False, na=False)]
 
 
-# ── KPIs ──────────────────────────────────────────────────────────────────────
+# ── Header ────────────────────────────────────────────────────────────────────
 
-st.title("Parkings Rennes — Disponibilité en temps réel")
+st.title("🅿️ Parkings Rennes — Disponibilité en temps réel")
 
 if "snapshot_time" in df.columns:
     last_ts = pd.to_datetime(df["snapshot_time"], utc=True).max()
     if pd.notna(last_ts):
-        st.caption(f"Dernière mise à jour : **{last_ts.astimezone(PARIS_TZ).strftime('%d/%m/%Y %H:%M')}**")
+        st.caption(f"Dernière mise à jour : **{last_ts.astimezone(PARIS_TZ).strftime('%d/%m/%Y à %H:%M')}**")
 
-c1, c2, c3, c4, c5 = st.columns(5)
-c1.metric("Parkings ouverts",    int(df["is_open"].sum()) if "is_open" in df.columns else len(df))
-c2.metric("Places libres",       int(df["free_spaces"].sum()) if "free_spaces" in df.columns else "—")
-c3.metric("Places occupées",     int(df["occupied_spaces"].sum()) if "occupied_spaces" in df.columns else "—")
-c4.metric("Parkings critiques",  int(df["is_critical"].sum()) if "is_critical" in df.columns else 0)
-c5.metric("Parkings complets",   int(df["is_full"].sum()) if "is_full" in df.columns else 0)
+# ── KPIs globaux ─────────────────────────────────────────────────────────────
+
+k1, k2, k3, k4, k5 = st.columns(5)
+k1.metric("🅿️ Parkings ouverts",   int(df["is_open"].sum()))
+k2.metric("✅ Places libres",       int(df["free_spaces"].sum()))
+k3.metric("🚗 Places occupées",     int(df["occupied_spaces"].sum()))
+k4.metric("⚠️ Parkings critiques",  int(df["is_critical"].sum()),
+          delta=f"{int(df['is_critical'].sum())} presque pleins", delta_color="inverse")
+k5.metric("🔴 Parkings complets",   int(df["is_full"].sum()),
+          delta_color="inverse")
 
 st.divider()
 
-tab_map, tab_list, tab_pr, tab_trends, tab_weather, tab_data = st.tabs(
-    ["Carte", "Centre-ville", "Parcs-Relais", "Tendances 24h", "Météo", "Données brutes"]
-)
+# ── Onglets ───────────────────────────────────────────────────────────────────
 
-# ── Carte ─────────────────────────────────────────────────────────────────────
-with tab_map:
-    map_df = df.dropna(subset=["lat", "lon"]).copy()
-    if not map_df.empty:
-        map_df["size"] = map_df["free_spaces"].clip(lower=5)
-        fig = px.scatter_mapbox(
+tab_carte, tab_cv, tab_pr, tab_trends, tab_meteo = st.tabs([
+    "🗺️ Carte", "🏙️ Centre-ville", "🚌 Parcs-Relais", "📈 Tendances 24h", "🌤️ Météo"
+])
+
+
+# ── CARTE ─────────────────────────────────────────────────────────────────────
+with tab_carte:
+    map_df = df_filtered.dropna(subset=["lat", "lon"]).copy()
+
+    if map_df.empty:
+        st.info("Pas de coordonnées GPS disponibles.")
+    else:
+        map_df["taille"] = map_df["free_spaces"].clip(lower=10)
+        map_df["label_statut"] = map_df.apply(
+            lambda r: "🔴 Complet" if r.get("is_full")
+            else ("⚠️ Critique" if r.get("is_critical") else "🟢 Disponible"), axis=1
+        )
+
+        fig_map = px.scatter_mapbox(
             map_df,
             lat="lat", lon="lon",
-            size="size",
+            size="taille",
             color="occupancy_rate",
             color_continuous_scale="RdYlGn_r",
             range_color=[0, 100],
             hover_name="name",
             hover_data={
-                "free_spaces": True,
-                "occupied_spaces": True,
-                "occupancy_rate": ":.1f",
-                "type": True,
-                "status": True,
-                "size": False, "lat": False, "lon": False,
+                "free_spaces":     ":.0f",
+                "total_spaces":    ":.0f",
+                "occupancy_rate":  ":.1f",
+                "type":            True,
+                "label_statut":    True,
+                "taille":          False,
+                "lat":             False,
+                "lon":             False,
             },
-            symbol="type" if "type" in map_df.columns else None,
             mapbox_style="open-street-map",
             zoom=12,
             center={"lat": 48.109, "lon": -1.677},
-            height=560,
-            labels={"occupancy_rate": "Taux occupation (%)", "type": "Type"},
+            height=580,
+            labels={
+                "occupancy_rate": "Taux occupation (%)",
+                "free_spaces":    "Places libres",
+                "total_spaces":   "Capacité totale",
+                "type":           "Type",
+                "label_statut":   "Statut",
+            },
         )
-        fig.update_layout(margin={"r": 0, "t": 0, "l": 0, "b": 0})
-        st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.info("Coordonnées GPS manquantes.")
+        fig_map.update_layout(margin={"r": 0, "t": 0, "l": 0, "b": 0},
+                              coloraxis_colorbar_title="Occupation %")
+        st.plotly_chart(fig_map, use_container_width=True)
 
-# ── Centre-ville Citedia ──────────────────────────────────────────────────────
-with tab_list:
-    cv = df[df["type"] == "Centre-ville"] if "type" in df.columns else df
-    if cv.empty:
-        st.info("Aucun parking centre-ville.")
+        # Légende
+        lc1, lc2, lc3 = st.columns(3)
+        lc1.success("🟢 Disponible  (< 70%)")
+        lc2.warning("🟡 Quasi-plein (70-90%)")
+        lc3.error("🔴 Critique / Complet (> 90%)")
+
+
+# ── CENTRE-VILLE ──────────────────────────────────────────────────────────────
+with tab_cv:
+    st.subheader("🏙️ Parkings centre-ville (Citedia)")
+
+    if df_cv.empty:
+        st.info("Aucune donnée centre-ville.")
     else:
+        # Jauges individuelles
+        cols = st.columns(5)
+        for i, (_, row) in enumerate(df_cv.iterrows()):
+            rate  = float(row.get("occupancy_rate", 0) or 0)
+            free  = int(row.get("free_spaces", 0) or 0)
+            total = int(row.get("total_spaces", 0) or 0)
+            icon  = color_status(rate)
+            with cols[i % 5]:
+                st.markdown(f"**{row['name']}**")
+                st.progress(min(rate / 100, 1.0))
+                st.caption(f"{icon} {free} / {total} places libres — **{rate:.0f}%** occupé")
+
+        st.divider()
+
+        # Bar chart horizontal
+        cv_sorted = df_cv.sort_values("free_spaces")
         fig_cv = px.bar(
-            cv.sort_values("free_spaces", ascending=True),
-            x="free_spaces", y="name", orientation="h",
-            color="occupancy_rate", color_continuous_scale="RdYlGn_r",
+            cv_sorted,
+            x="free_spaces", y="name",
+            orientation="h",
+            color="occupancy_rate",
+            color_continuous_scale="RdYlGn_r",
             range_color=[0, 100],
-            title="Places libres — Parkings centre-ville",
+            text="free_spaces",
+            title="Places libres par parking — Centre-ville",
             labels={"free_spaces": "Places libres", "name": "Parking",
                     "occupancy_rate": "Taux occ. (%)"},
             height=420,
-            text="free_spaces",
         )
-        fig_cv.update_traces(textposition="outside")
+        fig_cv.update_traces(texttemplate="%{text} places", textposition="outside")
+        fig_cv.update_layout(xaxis_range=[0, df_cv["total_spaces"].max() * 1.15])
         st.plotly_chart(fig_cv, use_container_width=True)
 
-        # Jauge taux d'occupation
-        cols_cv = st.columns(min(len(cv), 5))
-        for i, (_, row) in enumerate(cv.iterrows()):
-            if i >= 5:
-                break
-            rate = row.get("occupancy_rate", 0) or 0
-            color = "#e74c3c" if rate >= 90 else "#f39c12" if rate >= 70 else "#2ecc71"
-            cols_cv[i].markdown(
-                f"**{row['name']}**  \n"
-                f"🟢 {int(row.get('free_spaces',0))} libres / {int(row.get('total_spaces',0))}  \n"
-                f"<span style='color:{color}'>**{rate:.0f}%** occupé</span>",
-                unsafe_allow_html=True,
-            )
-
-# ── Parcs-Relais STAR ─────────────────────────────────────────────────────────
-with tab_pr:
-    pr = df[df["type"] == "Parc-Relais"] if "type" in df.columns else pd.DataFrame()
-    if pr.empty:
-        st.info("Aucun parc-relais.")
-    else:
-        fig_pr = px.bar(
-            pr.sort_values("free_spaces", ascending=True),
-            x="free_spaces", y="name", orientation="h",
-            color="occupancy_rate", color_continuous_scale="RdYlGn_r",
-            range_color=[0, 100],
-            title="Places libres — Parcs-Relais P+R",
-            labels={"free_spaces": "Places libres", "name": "Parc-Relais"},
-            height=380,
-            text="free_spaces",
+        # Tableau récap
+        st.dataframe(
+            df_cv[["name", "free_spaces", "occupied_spaces", "total_spaces", "occupancy_rate", "status"]]
+            .rename(columns={
+                "name": "Parking", "free_spaces": "Libres",
+                "occupied_spaces": "Occupées", "total_spaces": "Total",
+                "occupancy_rate": "Taux occ. (%)", "status": "Statut"
+            }).sort_values("Taux occ. (%)", ascending=False).reset_index(drop=True),
+            use_container_width=True, hide_index=True,
         )
-        fig_pr.update_traces(textposition="outside")
+
+
+# ── PARCS-RELAIS ──────────────────────────────────────────────────────────────
+with tab_pr:
+    st.subheader("🚌 Parcs-Relais P+R (STAR)")
+
+    if df_pr.empty:
+        st.info("Aucune donnée parc-relais.")
+    else:
+        # Jauges
+        cols_pr = st.columns(4)
+        for i, (_, row) in enumerate(df_pr.iterrows()):
+            rate  = float(row.get("occupancy_rate", 0) or 0)
+            free  = int(row.get("free_spaces", 0) or 0)
+            total = int(row.get("total_spaces", 0) or 0)
+            icon  = color_status(rate)
+            with cols_pr[i % 4]:
+                st.markdown(f"**{row['name']}**")
+                st.progress(min(rate / 100, 1.0))
+                st.caption(f"{icon} {free} / {total} — **{rate:.0f}%**")
+
+        st.divider()
+
+        fig_pr = px.bar(
+            df_pr.sort_values("free_spaces"),
+            x="free_spaces", y="name",
+            orientation="h",
+            color="occupancy_rate",
+            color_continuous_scale="RdYlGn_r",
+            range_color=[0, 100],
+            text="free_spaces",
+            title="Places libres par parc-relais",
+            labels={"free_spaces": "Places libres", "name": "Parc-Relais",
+                    "occupancy_rate": "Taux occ. (%)"},
+            height=380,
+        )
+        fig_pr.update_traces(texttemplate="%{text} places", textposition="outside")
         st.plotly_chart(fig_pr, use_container_width=True)
 
-        # Spécificités P+R : EV, covoiturage, PMR
-        if "free_ev" in pr.columns:
-            st.subheader("Disponibilité spécifique P+R")
-            special_cols = st.columns(3)
-            with special_cols[0]:
-                ev_df = pr[pr["total_ev"].fillna(0) > 0][["name", "free_ev", "total_ev"]]
-                if not ev_df.empty:
-                    st.markdown("**⚡ Bornes électriques**")
-                    st.dataframe(ev_df.rename(columns={"name": "Parc", "free_ev": "Libres", "total_ev": "Total"}), hide_index=True)
-            with special_cols[1]:
-                cp_df = pr[pr["total_carpool"].fillna(0) > 0][["name", "free_carpool", "total_carpool"]]
-                if not cp_df.empty:
-                    st.markdown("**🚗 Covoiturage**")
-                    st.dataframe(cp_df.rename(columns={"name": "Parc", "free_carpool": "Libres", "total_carpool": "Total"}), hide_index=True)
-            with special_cols[2]:
-                pmr_df = pr[pr["total_pmr"].fillna(0) > 0][["name", "free_pmr", "total_pmr"]]
-                if not pmr_df.empty:
-                    st.markdown("**♿ PMR**")
-                    st.dataframe(pmr_df.rename(columns={"name": "Parc", "free_pmr": "Libres", "total_pmr": "Total"}), hide_index=True)
+        # Spécificités P+R
+        st.subheader("Disponibilités spécifiques")
+        sp1, sp2, sp3 = st.columns(3)
 
-# ── Tendances 24h ─────────────────────────────────────────────────────────────
+        with sp1:
+            st.markdown("**⚡ Véhicules électriques**")
+            ev = df_pr[df_pr["total_ev"].fillna(0) > 0][["name", "free_ev", "total_ev"]]
+            if not ev.empty:
+                fig_ev = px.bar(ev, x="name", y=["free_ev", "total_ev"],
+                                barmode="overlay", color_discrete_sequence=["#2ecc71", "#bdc3c7"],
+                                labels={"value": "Places", "name": "Parc"},
+                                height=280)
+                fig_ev.update_layout(showlegend=False, margin={"t": 10})
+                st.plotly_chart(fig_ev, use_container_width=True)
+            else:
+                st.info("Aucune borne VE.")
+
+        with sp2:
+            st.markdown("**🚗 Covoiturage**")
+            cp = df_pr[df_pr["total_carpool"].fillna(0) > 0][["name", "free_carpool", "total_carpool"]]
+            if not cp.empty:
+                fig_cp = px.bar(cp, x="name", y=["free_carpool", "total_carpool"],
+                                barmode="overlay", color_discrete_sequence=["#3498db", "#bdc3c7"],
+                                labels={"value": "Places", "name": "Parc"},
+                                height=280)
+                fig_cp.update_layout(showlegend=False, margin={"t": 10})
+                st.plotly_chart(fig_cp, use_container_width=True)
+            else:
+                st.info("Aucune place covoiturage.")
+
+        with sp3:
+            st.markdown("**♿ PMR**")
+            pmr = df_pr[df_pr["total_pmr"].fillna(0) > 0][["name", "free_pmr", "total_pmr"]]
+            if not pmr.empty:
+                fig_pmr = px.bar(pmr, x="name", y=["free_pmr", "total_pmr"],
+                                 barmode="overlay", color_discrete_sequence=["#9b59b6", "#bdc3c7"],
+                                 labels={"value": "Places", "name": "Parc"},
+                                 height=280)
+                fig_pmr.update_layout(showlegend=False, margin={"t": 10})
+                st.plotly_chart(fig_pmr, use_container_width=True)
+            else:
+                st.info("Aucune place PMR.")
+
+
+# ── TENDANCES 24h ─────────────────────────────────────────────────────────────
 with tab_trends:
     hist = load_history()
+
     if hist.empty or "snapshot_time" not in hist.columns:
-        st.info("Pas encore d'historique. Relancez le pipeline plusieurs fois.")
+        st.info("Pas encore d'historique. Relancez le pipeline plusieurs fois (toutes les 15 min avec Airflow).")
     else:
         hist = hist.copy()
         hist["snapshot_time"] = to_paris(hist["snapshot_time"])
-        avg = hist.groupby("snapshot_time", as_index=False)["free_spaces"].mean()
 
-        fig_trend = go.Figure()
-        fig_trend.add_trace(go.Scatter(
-            x=avg["snapshot_time"], y=avg["free_spaces"].round(0),
-            name="Places libres (moy.)", mode="lines+markers",
+        # Courbe globale places libres
+        avg = hist.groupby("snapshot_time", as_index=False)["free_spaces"].mean()
+        avg["free_spaces"] = avg["free_spaces"].round(0)
+
+        fig_global = go.Figure()
+        fig_global.add_trace(go.Scatter(
+            x=avg["snapshot_time"], y=avg["free_spaces"],
+            name="Places libres (moy. tous parkings)",
+            mode="lines+markers",
             line={"color": "#2ecc71", "width": 2},
+            fill="tozeroy", fillcolor="rgba(46,204,113,0.1)",
         ))
+
         if "temperature_c" in hist.columns and hist["temperature_c"].notna().any():
-            avg_t = hist.dropna(subset=["temperature_c"]).groupby("snapshot_time", as_index=False)["temperature_c"].mean()
-            fig_trend.add_trace(go.Scatter(
+            avg_t = hist.dropna(subset=["temperature_c"]).groupby(
+                "snapshot_time", as_index=False)["temperature_c"].mean()
+            fig_global.add_trace(go.Scatter(
                 x=avg_t["snapshot_time"], y=avg_t["temperature_c"].round(1),
                 name="Température (°C)", mode="lines",
-                yaxis="y2", line={"color": "#e67e22", "dash": "dot"},
+                yaxis="y2", line={"color": "#e67e22", "dash": "dot", "width": 2},
             ))
-            fig_trend.update_layout(yaxis2={"title": "Température (°C)", "overlaying": "y", "side": "right"})
+            fig_global.update_layout(
+                yaxis2={"title": "Température (°C)", "overlaying": "y", "side": "right"})
 
-        fig_trend.update_layout(
-            title="Évolution des places libres sur 24h (heure de Paris)",
-            xaxis_title="Heure", yaxis_title="Places libres (moyenne)",
-            height=420,
+        fig_global.update_layout(
+            title="Évolution des places libres (tous parkings) — 24h",
+            xaxis_title="Heure (Paris)", yaxis_title="Places libres (moyenne)",
+            height=400, legend={"x": 0.01, "y": 0.99},
         )
-        st.plotly_chart(fig_trend, use_container_width=True)
+        st.plotly_chart(fig_global, use_container_width=True)
 
-        # Par parking
+        # Détail par parking
+        st.subheader("Détail par parking")
         if "parking_id" in hist.columns and "name" in df.columns:
-            hist_named = hist.merge(df[["parking_id", "name"]].drop_duplicates(), on="parking_id", how="left")
-            parking_choice = st.selectbox("Détail par parking", hist_named["name"].dropna().unique())
-            sub = hist_named[hist_named["name"] == parking_choice]
-            fig_sub = px.line(sub, x="snapshot_time", y="free_spaces",
-                              markers=True, title=f"Places libres — {parking_choice}",
-                              labels={"snapshot_time": "Heure", "free_spaces": "Places libres"})
+            names = df[["parking_id", "name"]].drop_duplicates()
+            hist_n = hist.merge(names, on="parking_id", how="left")
+            choice = st.selectbox("Choisir un parking", sorted(hist_n["name"].dropna().unique()))
+            sub = hist_n[hist_n["name"] == choice].sort_values("snapshot_time")
+            fig_sub = px.area(
+                sub, x="snapshot_time", y="free_spaces",
+                title=f"Places libres — {choice}",
+                labels={"snapshot_time": "Heure", "free_spaces": "Places libres"},
+                color_discrete_sequence=["#3498db"],
+                height=320,
+            )
             st.plotly_chart(fig_sub, use_container_width=True)
 
-# ── Météo ─────────────────────────────────────────────────────────────────────
-with tab_weather:
-    wh = load_weather_hist()
-    last_w = wh.iloc[-1] if not wh.empty else None
+        # Heatmap taux d'occupation
+        if "occupancy_rate" in hist.columns and "parking_id" in hist.columns:
+            st.subheader("Heatmap — taux d'occupation par parking")
+            pivot = hist.merge(df[["parking_id", "name"]].drop_duplicates(), on="parking_id", how="left")
+            pivot["heure"] = pivot["snapshot_time"].dt.strftime("%H:%M")
+            heat = pivot.pivot_table(index="name", columns="heure",
+                                     values="occupancy_rate", aggfunc="mean").round(1)
+            fig_heat = px.imshow(
+                heat, color_continuous_scale="RdYlGn_r",
+                range_color=[0, 100], aspect="auto",
+                title="Taux d'occupation moyen (%) par heure",
+                labels={"color": "Occ. %"},
+                height=420,
+            )
+            st.plotly_chart(fig_heat, use_container_width=True)
 
-    if last_w is not None:
-        wc1, wc2, wc3, wc4 = st.columns(4)
-        wc1.metric("Température",  f"{last_w.get('temperature_c','—')} °C")
-        wc2.metric("Humidité",     f"{last_w.get('humidity_pct','—')} %")
-        wc3.metric("Vent",         f"{last_w.get('wind_speed_kmh','—')} km/h")
-        wc4.metric("Ciel",         str(last_w.get("weather_description", "—")))
+
+# ── MÉTÉO ─────────────────────────────────────────────────────────────────────
+with tab_meteo:
+    wh = load_weather_hist()
 
     if not wh.empty and "scraped_at" in wh.columns:
         wh = wh.copy()
         wh["scraped_at"] = to_paris(wh["scraped_at"])
-        if wh["temperature_c"].notna().any():
-            st.plotly_chart(px.line(wh, x="scraped_at", y="temperature_c", markers=True,
-                title="Température (Rennes) — 24h", color_discrete_sequence=["#e74c3c"],
-                labels={"scraped_at": "Heure", "temperature_c": "°C"}), use_container_width=True)
-        if wh["humidity_pct"].notna().any():
-            st.plotly_chart(px.line(wh, x="scraped_at", y="humidity_pct", markers=True,
-                title="Humidité — 24h", color_discrete_sequence=["#3498db"],
-                labels={"scraped_at": "Heure", "humidity_pct": "%"}), use_container_width=True)
-    else:
-        st.info("Pas encore d'historique météo.")
+        last_w = wh.iloc[-1]
 
-# ── Données brutes ────────────────────────────────────────────────────────────
-with tab_data:
-    cols = [c for c in ["parking_id", "name", "type", "source", "free_spaces",
-                         "occupied_spaces", "total_spaces", "occupancy_rate",
-                         "is_open", "is_critical", "is_full", "status", "address"] if c in df.columns]
-    st.dataframe(df[cols].sort_values("occupancy_rate", ascending=False),
-                 use_container_width=True, height=500)
-    st.download_button("Télécharger CSV",
-                       df[cols].to_csv(index=False).encode("utf-8"),
-                       "parkings_rennes.csv", "text/csv")
+        wm1, wm2, wm3, wm4 = st.columns(4)
+        wm1.metric("🌡️ Température",  f"{last_w.get('temperature_c','—')} °C")
+        wm2.metric("💧 Humidité",     f"{last_w.get('humidity_pct','—')} %")
+        wm3.metric("💨 Vent",         f"{last_w.get('wind_speed_kmh','—')} km/h")
+        wm4.metric("🌤️ Ciel",         str(last_w.get("weather_description","—")))
+
+        st.divider()
+
+        col_t, col_h = st.columns(2)
+        with col_t:
+            if wh["temperature_c"].notna().any():
+                fig_t = px.line(wh, x="scraped_at", y="temperature_c",
+                                markers=True, title="Température sur 24h",
+                                labels={"scraped_at": "Heure", "temperature_c": "°C"},
+                                color_discrete_sequence=["#e74c3c"], height=320)
+                fig_t.update_layout(margin={"t": 40})
+                st.plotly_chart(fig_t, use_container_width=True)
+
+        with col_h:
+            if wh["humidity_pct"].notna().any():
+                fig_h = px.line(wh, x="scraped_at", y="humidity_pct",
+                                markers=True, title="Humidité sur 24h",
+                                labels={"scraped_at": "Heure", "humidity_pct": "%"},
+                                color_discrete_sequence=["#3498db"], height=320)
+                fig_h.update_layout(margin={"t": 40})
+                st.plotly_chart(fig_h, use_container_width=True)
+
+        if wh["wind_speed_kmh"].notna().any():
+            fig_w = px.bar(wh, x="scraped_at", y="wind_speed_kmh",
+                           title="Vitesse du vent sur 24h",
+                           labels={"scraped_at": "Heure", "wind_speed_kmh": "km/h"},
+                           color_discrete_sequence=["#95a5a6"], height=280)
+            st.plotly_chart(fig_w, use_container_width=True)
+    else:
+        st.info("Pas encore d'historique météo. Relancez le pipeline.")
