@@ -1,46 +1,99 @@
 """
-Data Lake local — sauvegarde append-only des snapshots bruts dans data/raw/.
-Chaque fichier est horodaté : source_YYYYMMDD_HHMMSS.json
+Data Lake MinIO — sauvegarde append-only des snapshots bruts dans MinIO (S3-compatible).
+Chaque objet est horodaté : <source>/<source>_YYYYMMDD_HHMMSS.json
+Rien n'est stocké sur le disque local.
 """
+import io
 import json
 import re
 import logging
+import os
 from datetime import datetime, timezone
-from pathlib import Path
+from urllib3 import PoolManager
 
 import pandas as pd
+from minio import Minio
+from minio.error import S3Error
+from dotenv import load_dotenv
+
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-RAW_DIR       = Path("data/raw")
-PROCESSED_DIR = Path("data/processed")
+# ── Configuration MinIO ────────────────────────────────────────────────────────
+_ENDPOINT   = os.getenv("MINIO_ENDPOINT",   "localhost:9000")
+_ACCESS_KEY = os.getenv("MINIO_ACCESS_KEY", "minioadmin")
+_SECRET_KEY = os.getenv("MINIO_SECRET_KEY", "minioadmin")
+_SECURE     = os.getenv("MINIO_SECURE", "false").lower() == "true"
+
+BUCKET_RAW       = os.getenv("MINIO_BUCKET_RAW",       "parkings-raw")
+BUCKET_PROCESSED = os.getenv("MINIO_BUCKET_PROCESSED", "parkings-processed")
+
+
+def _client() -> Minio:
+    # http_client sans retries pour ne pas bloquer le pipeline si MinIO est absent
+    http = PoolManager(num_pools=10, timeout=3.0, retries=False)
+    return Minio(_ENDPOINT, access_key=_ACCESS_KEY, secret_key=_SECRET_KEY, secure=_SECURE, http_client=http)
+
+
+def _ensure_bucket(client: Minio, bucket: str) -> None:
+    if not client.bucket_exists(bucket):
+        client.make_bucket(bucket)
+        logger.info("MinIO bucket créé : %s", bucket)
 
 
 def _ts() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
 
 
-def save_raw(data, source: str) -> Path:
-    """Sauvegarde un snapshot brut (dict ou list) dans data/raw/<source>/."""
-    dest = RAW_DIR / source
-    dest.mkdir(parents=True, exist_ok=True)
-    path = dest / f"{source}_{_ts()}.json"
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-    logger.info("Data Lake [%s] → %s", source, path)
-    return path
+# ── Écriture ───────────────────────────────────────────────────────────────────
+
+def save_raw(data, source: str) -> str | None:
+    """Upload un snapshot brut (dict ou list) dans MinIO sous <source>/<source>_ts.json.
+    Retourne la clé de l'objet ou None si MinIO est indisponible (non bloquant)."""
+    try:
+        client = _client()
+        _ensure_bucket(client, BUCKET_RAW)
+
+        key     = f"{source}/{source}_{_ts()}.json"
+        content = json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8")
+        buf     = io.BytesIO(content)
+
+        client.put_object(
+            BUCKET_RAW, key, buf, length=len(content), content_type="application/json"
+        )
+        logger.info("Data Lake MinIO [%s] → %s/%s", source, BUCKET_RAW, key)
+        return key
+    except Exception as exc:
+        logger.warning("Data Lake MinIO indisponible [%s] : %s", source, exc)
+        return None
 
 
-def save_processed(df: pd.DataFrame, name: str = "latest") -> Path:
-    """Sauvegarde le DataFrame transformé en CSV dans data/processed/."""
-    PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
-    path = PROCESSED_DIR / f"{name}.csv"
-    df.to_csv(path, index=False, encoding="utf-8")
-    return path
+def save_processed(df: pd.DataFrame, name: str = "latest") -> str | None:
+    """Upload le DataFrame transformé en CSV dans MinIO (bucket processed).
+    Retourne la clé ou None si MinIO est indisponible (non bloquant)."""
+    try:
+        client = _client()
+        _ensure_bucket(client, BUCKET_PROCESSED)
+
+        key     = f"{name}.csv"
+        content = df.to_csv(index=False).encode("utf-8")
+        buf     = io.BytesIO(content)
+
+        client.put_object(
+            BUCKET_PROCESSED, key, buf, length=len(content), content_type="text/csv"
+        )
+        logger.info("Data Lake MinIO processed → %s/%s", BUCKET_PROCESSED, key)
+        return key
+    except Exception as exc:
+        logger.warning("Data Lake MinIO indisponible [processed] : %s", exc)
+        return None
 
 
-def _filename_to_dt(filename: str) -> datetime | None:
-    m = re.search(r"(\d{8}_\d{6})", filename)
+# ── Lecture ────────────────────────────────────────────────────────────────────
+
+def _filename_to_dt(key: str) -> datetime | None:
+    m = re.search(r"(\d{8}_\d{6})", key)
     if not m:
         return None
     try:
@@ -50,26 +103,48 @@ def _filename_to_dt(filename: str) -> datetime | None:
 
 
 def load_latest_raw(source: str):
-    """Charge le dernier snapshot d'une source depuis le Data Lake."""
-    files = sorted((RAW_DIR / source).glob(f"{source}_*.json"))
-    if not files:
+    """Charge le dernier snapshot d'une source depuis MinIO."""
+    client = _client()
+    try:
+        objects = sorted(
+            client.list_objects(BUCKET_RAW, prefix=f"{source}/"),
+            key=lambda o: o.object_name,
+        )
+    except S3Error:
         return None
-    with open(files[-1], encoding="utf-8") as f:
-        return json.load(f)
+
+    if not objects:
+        return None
+
+    response = client.get_object(BUCKET_RAW, objects[-1].object_name)
+    try:
+        return json.loads(response.read().decode("utf-8"))
+    finally:
+        response.close()
+        response.release_conn()
 
 
 def load_weather_history(hours: int = 24) -> pd.DataFrame:
-    """Construit un historique météo depuis les fichiers du Data Lake."""
-    files = sorted((RAW_DIR / "weather").glob("weather_*.json"))
+    """Construit un historique météo depuis les objets MinIO."""
+    client = _client()
     rows = []
-    for f in files:
-        dt = _filename_to_dt(f.name)
-        if dt is None:
+    try:
+        objects = client.list_objects(BUCKET_RAW, prefix="weather/")
+    except S3Error:
+        return pd.DataFrame()
+
+    cutoff = datetime.now(timezone.utc).timestamp() - hours * 3600
+
+    for obj in objects:
+        dt = _filename_to_dt(obj.object_name)
+        if dt is None or dt.timestamp() < cutoff:
             continue
-        if (datetime.now(timezone.utc) - dt).total_seconds() / 3600 > hours:
-            continue
-        with open(f, encoding="utf-8") as fp:
-            w = json.load(fp)
+        response = client.get_object(BUCKET_RAW, obj.object_name)
+        try:
+            w = json.loads(response.read().decode("utf-8"))
+        finally:
+            response.close()
+            response.release_conn()
         if w.get("scrape_error"):
             continue
         rows.append({
@@ -79,42 +154,52 @@ def load_weather_history(hours: int = 24) -> pd.DataFrame:
             "wind_speed_kmh":      w.get("wind_speed_kmh"),
             "weather_description": w.get("weather_description"),
         })
+
     return pd.DataFrame(rows) if rows else pd.DataFrame()
 
 
 def load_parking_history(hours: int = 24) -> pd.DataFrame:
-    """Construit un historique de disponibilité parkings depuis le Data Lake."""
-    rows = []
+    """Construit un historique de disponibilité parkings depuis MinIO."""
+    client = _client()
+    rows   = []
+    cutoff = datetime.now(timezone.utc).timestamp() - hours * 3600
+
     for source in ["citedia", "star"]:
-        files = sorted((RAW_DIR / source).glob(f"{source}_*.json"))
-        for f in files:
-            dt = _filename_to_dt(f.name)
-            if dt is None:
+        try:
+            objects = client.list_objects(BUCKET_RAW, prefix=f"{source}/")
+        except S3Error:
+            continue
+
+        for obj in objects:
+            dt = _filename_to_dt(obj.object_name)
+            if dt is None or dt.timestamp() < cutoff:
                 continue
-            if (datetime.now(timezone.utc) - dt).total_seconds() / 3600 > hours:
-                continue
-            with open(f, encoding="utf-8") as fp:
-                data = json.load(fp)
-            # Citedia : liste de dicts
+            response = client.get_object(BUCKET_RAW, obj.object_name)
+            try:
+                data = json.loads(response.read().decode("utf-8"))
+            finally:
+                response.close()
+                response.release_conn()
+
             if source == "citedia" and isinstance(data, list):
                 for p in data:
                     rows.append({
-                        "snapshot_time":  dt,
-                        "source":         "citedia",
-                        "parking_id":     p.get("id"),
-                        "name":           p.get("name"),
-                        "free":           p.get("free", 0),
-                        "max":            p.get("max", 0),
+                        "snapshot_time": dt,
+                        "source":        "citedia",
+                        "parking_id":    p.get("id"),
+                        "name":          p.get("name"),
+                        "free":          p.get("free", 0),
+                        "max":           p.get("max", 0),
                     })
-            # STAR : dict avec "realtime"
             elif source == "star" and isinstance(data, dict):
                 for p in data.get("realtime", []):
                     rows.append({
-                        "snapshot_time":  dt,
-                        "source":         "star",
-                        "parking_id":     p.get("idparc"),
-                        "name":           p.get("nom"),
-                        "free":           p.get("jrdinfosoliste", 0),
-                        "max":            p.get("capacitesoliste", 0),
+                        "snapshot_time": dt,
+                        "source":        "star",
+                        "parking_id":    p.get("idparc"),
+                        "name":          p.get("nom"),
+                        "free":          p.get("jrdinfosoliste", 0),
+                        "max":           p.get("capacitesoliste", 0),
                     })
+
     return pd.DataFrame(rows) if rows else pd.DataFrame()

@@ -78,6 +78,8 @@ docker compose down -v --remove-orphans
 | Dashboard Streamlit | http://localhost:8501 | — |
 | Airflow UI | http://localhost:8081 | admin / admin |
 | PostgreSQL | localhost:5434 | parking_user / parking2024 |
+| MinIO Console | http://localhost:9001 | minioadmin / minioadmin |
+| MinIO API (S3) | http://localhost:9000 | minioadmin / minioadmin |
 
 ---
 

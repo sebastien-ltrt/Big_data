@@ -16,18 +16,43 @@ x-airflow-common: &airflow-common
     CITEDIA_API_URL: http://data.citedia.com/r1/parks
     STAR_API_BASE_URL: https://data.explore.star.fr/api/explore/v2.1
     WEATHER_URL: https://wttr.in/Rennes
+    # MinIO Data Lake
+    MINIO_ENDPOINT: minio:9000
+    MINIO_ACCESS_KEY: minioadmin
+    MINIO_SECRET_KEY: minioadmin
+    MINIO_BUCKET_RAW: parkings-raw
+    MINIO_BUCKET_PROCESSED: parkings-processed
+    MINIO_SECURE: "false"
   volumes:
     - ./dags:/opt/airflow/dags
     - ./src:/opt/airflow/src
-    - ./data:/opt/airflow/data
     - airflow_logs:/opt/airflow/logs
   depends_on:
     postgres-airflow:
       condition: service_healthy
     postgres-parkings:
       condition: service_healthy
+    minio:
+      condition: service_healthy
 
 services:
+
+  # MinIO — Data Lake (S3-compatible)
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes:
+      - minio_data:/data
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      retries: 5
 
   # PostgreSQL — métadonnées Airflow
   postgres-airflow:
@@ -97,12 +122,18 @@ services:
       PG_DB: parkings_rennes
       PG_USER: parking_user
       PG_PASSWORD: parking2024
-    volumes:
-      - ./data:/app/data
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      MINIO_BUCKET_RAW: parkings-raw
+      MINIO_BUCKET_PROCESSED: parkings-processed
+      MINIO_SECURE: "false"
     ports:
       - "8501:8501"
     depends_on:
       postgres-parkings:
+        condition: service_healthy
+      minio:
         condition: service_healthy
     restart: unless-stopped
 
@@ -110,3 +141,4 @@ volumes:
   postgres_airflow_data:
   postgres_parkings_data:
   airflow_logs:
+  minio_data:
