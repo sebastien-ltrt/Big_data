@@ -1,52 +1,62 @@
 #!/usr/bin/env bash
 # ============================================================
-# start.sh — Lance le pipeline en boucle + le dashboard
+# start.sh — Lance tout le stack (Docker + pipeline + dashboard)
 # Usage : bash start.sh
 # ============================================================
 
 set -e
-
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$PROJECT_DIR"
 
+echo "============================================"
+echo "  Parkings Rennes — Démarrage complet"
+echo "============================================"
+
+# ── 1. Docker Compose ────────────────────────────────────────
+echo ""
+echo "[1/4] Démarrage des services Docker (MinIO, PostgreSQL, Airflow)..."
+newgrp docker 2>/dev/null || true
+docker compose up --build -d
+
+echo "[INFO] Attente que les services soient prêts..."
+docker compose wait postgres-parkings 2>/dev/null || sleep 15
+
+# ── 2. Environnement Python ──────────────────────────────────
+echo ""
+echo "[2/4] Préparation de l'environnement Python..."
 VENV="$PROJECT_DIR/venv/bin/activate"
-
-echo "============================================"
-echo "  Parkings Rennes — Démarrage"
-echo "============================================"
-
-# Vérifie que le venv existe
 if [ ! -f "$VENV" ]; then
-    echo "[INFO] Création de l'environnement virtuel..."
+    echo "[INFO] Création du venv..."
     python3 -m venv venv
     source "$VENV"
     pip install -r requirements.txt -q
-    echo "[INFO] Dépendances installées."
 else
     source "$VENV"
 fi
 
-# Premier run immédiat du pipeline
+# ── 3. Premier run du pipeline ───────────────────────────────
 echo ""
-echo "[1/2] Lancement du pipeline initial..."
+echo "[3/4] Lancement du pipeline initial..."
 python src/pipeline.py
 
-# Lance le pipeline en boucle en arrière-plan (toutes les 5 min)
+# ── 4. Pipeline en boucle en arrière-plan ───────────────────
 echo ""
-echo "[2/2] Pipeline en boucle (toutes les 5 min) en arrière-plan..."
+echo "[4/4] Pipeline en boucle (toutes les 5 min) en arrière-plan..."
 python run_pipeline_loop.py 300 > logs/pipeline_loop.log 2>&1 &
 LOOP_PID=$!
 echo "[INFO] Pipeline loop PID : $LOOP_PID"
 
-# Lance le dashboard (bloquant — reste ouvert)
+# ── Accès ────────────────────────────────────────────────────
 echo ""
-echo "[INFO] Démarrage du dashboard → http://localhost:8501"
-echo "[INFO] Ctrl+C pour tout arrêter."
+echo "============================================"
+echo "  Tout est lancé !"
+echo "  Dashboard   → http://localhost:8501"
+echo "  Airflow UI  → http://localhost:8081  (admin/admin)"
+echo "  MinIO       → http://localhost:9001  (minioadmin/minioadmin)"
+echo "  Ctrl+C pour tout arrêter."
 echo "============================================"
 
-# Quand on fait Ctrl+C, on arrête aussi le pipeline loop
-trap "echo ''; echo '[INFO] Arrêt...'; kill $LOOP_PID 2>/dev/null; exit 0" INT TERM
+trap "echo ''; echo '[INFO] Arrêt...'; kill $LOOP_PID 2>/dev/null; docker compose down; exit 0" INT TERM
 
-streamlit run src/dashboard/app.py \
-    --server.port 8501 \
-    --server.headless false
+# Garde le script actif (les services tournent en Docker)
+wait $LOOP_PID
