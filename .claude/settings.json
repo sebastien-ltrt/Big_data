@@ -1,0 +1,33 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 -m venv venv)",
+      "Bash(venv/bin/pip install:*)",
+      "Bash(curl -s \"https://data.explore.star.fr/api/explore/v2.1/catalog/datasets/tco-velo-disponibilite-temps-reel-v2/records?limit=2\")",
+      "Bash(python3 -m json.tool)",
+      "Bash(curl -s \"https://data.explore.star.fr/api/explore/v2.1/catalog/datasets?limit=5&search=velo\")",
+      "Bash(curl -s \"https://data.explore.star.fr/api/explore/v2.1/catalog/datasets?limit=50&search=velo\")",
+      "Bash(curl -s \"https://data.explore.star.fr/api/explore/v2.1/catalog/datasets/vls-stations-etat-tr/records?limit=2\")",
+      "Bash(curl -s \"https://data.explore.star.fr/api/explore/v2.1/catalog/datasets/vls-stations-topologie-td/records?limit=2\")",
+      "Bash(venv/bin/python -c \":*)",
+      "Bash(curl -s \"https://data.rennesmetropole.fr/api/explore/v2.1/catalog/datasets/etat-des-stations-le-velo-star-en-temps-reel/records?limit=3\")",
+      "Bash(psql --version)",
+      "Bash(systemctl is-active:*)",
+      "Bash(sudo dnf:*)",
+      "Bash(chmod +x /home/sebou/Documents/projets/big_data/setup_db.sh)",
+      "Bash(timeout 5 venv/bin/streamlit run src/dashboard/app.py --server.headless true)",
+      "Bash(venv/bin/python src/pipeline.py)",
+      "Bash(sudo grep:*)",
+      "Bash(docker compose:*)",
+      "Bash(docker rmi:*)",
+      "Bash(find . -not -name '.gitignore' -not -name 'README.md' -not -path './.git/*' -not -name '.' -delete)",
+      "Bash(curl -s \"https://data.rennesmetropole.fr/api/explore/v2.1/catalog/datasets?limit=50&search=parking\")",
+      "Bash(python3 -c \":*)",
+      "Bash(curl -s \"https://data.rennesmetropole.fr/api/explore/v2.1/catalog/datasets?limit=20&search=parking+temps+reel\")",
+      "Bash(curl -s \"https://data.rennesmetropole.fr/api/explore/v2.1/catalog/datasets?limit=100&q=stationnement\")",
+      "Bash(curl -s \"https://data.rennesmetropole.fr/api/explore/v2.1/catalog/datasets/api-parkings-rennes-metropole/records?limit=3\")",
+      "Bash(curl -s \"http://data.citedia.com/r1/parks/status\")",
+      "Bash(curl -s \"http://data.citedia.com/r1/parks\")"
+    ]
+  }
+}

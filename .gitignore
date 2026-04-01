@@ -1,0 +1,24 @@
+# Environnement
+.env
+venv/
+__pycache__/
+*.pyc
+
+# Data
+data/raw/
+data/processed/
+*.parquet
+
+# Logs
+logs/
+*.log
+
+# IDE
+.vscode/
+.idea/
+
+# Docker
+.dockerignore
+
+# OS
+.DS_Store

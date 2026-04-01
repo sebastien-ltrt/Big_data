@@ -1,0 +1,112 @@
+x-airflow-common: &airflow-common
+  build: .
+  environment:
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__CORE__FERNET_KEY: 'ZmDfcTF7_60GrrY167zsiPd67pEvs0aGOv2oasOM1Pg='
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'false'
+    AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres-airflow:5432/airflow
+    AIRFLOW__WEBSERVER__SECRET_KEY: 'parkings_rennes_2024'
+    # Notre app
+    PG_HOST: postgres-parkings
+    PG_PORT: 5432
+    PG_DB: parkings_rennes
+    PG_USER: parking_user
+    PG_PASSWORD: parking2024
+    CITEDIA_API_URL: http://data.citedia.com/r1/parks
+    STAR_API_BASE_URL: https://data.explore.star.fr/api/explore/v2.1
+    WEATHER_URL: https://wttr.in/Rennes
+  volumes:
+    - ./dags:/opt/airflow/dags
+    - ./src:/opt/airflow/src
+    - ./data:/opt/airflow/data
+    - airflow_logs:/opt/airflow/logs
+  depends_on:
+    postgres-airflow:
+      condition: service_healthy
+    postgres-parkings:
+      condition: service_healthy
+
+services:
+
+  # PostgreSQL — métadonnées Airflow
+  postgres-airflow:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: airflow
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+    volumes:
+      - postgres_airflow_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "airflow"]
+      interval: 10s
+      retries: 5
+
+  # PostgreSQL — Data Warehouse parkings
+  postgres-parkings:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: parkings_rennes
+      POSTGRES_USER: parking_user
+      POSTGRES_PASSWORD: parking2024
+    volumes:
+      - postgres_parkings_data:/var/lib/postgresql/data
+      - ./docker/init_db.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "parking_user", "-d", "parkings_rennes"]
+      interval: 10s
+      retries: 5
+
+  # Airflow init (run once)
+  airflow-init:
+    <<: *airflow-common
+    command: ["bash", "-c", "airflow db migrate && airflow users create --username admin --password admin --firstname Admin --lastname Parkings --role Admin --email admin@parkings.fr"]
+    restart: on-failure
+
+  # Airflow scheduler
+  airflow-scheduler:
+    <<: *airflow-common
+    command: scheduler
+    restart: unless-stopped
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+
+  # Airflow webserver
+  airflow-webserver:
+    <<: *airflow-common
+    command: webserver
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+
+  # Dashboard Streamlit
+  streamlit:
+    build:
+      context: .
+      dockerfile: Dockerfile.streamlit
+    environment:
+      PG_HOST: postgres-parkings
+      PG_PORT: 5432
+      PG_DB: parkings_rennes
+      PG_USER: parking_user
+      PG_PASSWORD: parking2024
+    volumes:
+      - ./data:/app/data
+    ports:
+      - "8501:8501"
+    depends_on:
+      postgres-parkings:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  postgres_airflow_data:
+  postgres_parkings_data:
+  airflow_logs:
