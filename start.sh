@@ -12,14 +12,25 @@ echo "============================================"
 echo "  Parkings Rennes — Démarrage complet"
 echo "============================================"
 
+# ── 0. Fichier .env ──────────────────────────────────────────
+if [ ! -f ".env" ]; then
+    echo ""
+    echo "[INFO] .env absent — copie depuis .env.example..."
+    cp .env.example .env
+    echo "[INFO] .env créé. Valeurs par défaut utilisées (compatibles Docker)."
+fi
+
 # ── 1. Docker Compose ────────────────────────────────────────
 echo ""
 echo "[1/4] Démarrage des services Docker (MinIO, PostgreSQL, Airflow)..."
 newgrp docker 2>/dev/null || true
 docker compose up --build -d
 
-echo "[INFO] Attente que les services soient prêts..."
-docker compose wait postgres-parkings 2>/dev/null || sleep 15
+echo "[INFO] Attente que postgres-parkings soit prêt..."
+until docker compose exec -T postgres-parkings pg_isready -U parking_user -d parkings_rennes -q 2>/dev/null; do
+    sleep 2
+done
+echo "[INFO] PostgreSQL prêt."
 
 # ── 2. Environnement Python ──────────────────────────────────
 echo ""
@@ -37,11 +48,12 @@ fi
 # ── 3. Premier run du pipeline ───────────────────────────────
 echo ""
 echo "[3/4] Lancement du pipeline initial..."
-python src/pipeline.py
+python -m src.controllers.pipeline
 
 # ── 4. Pipeline en boucle en arrière-plan ───────────────────
 echo ""
 echo "[4/4] Pipeline en boucle (toutes les 5 min) en arrière-plan..."
+mkdir -p logs
 python run_pipeline_loop.py 300 > logs/pipeline_loop.log 2>&1 &
 LOOP_PID=$!
 echo "[INFO] Pipeline loop PID : $LOOP_PID"
@@ -50,13 +62,16 @@ echo "[INFO] Pipeline loop PID : $LOOP_PID"
 echo ""
 echo "============================================"
 echo "  Tout est lancé !"
+echo ""
 echo "  Dashboard   → http://localhost:8501"
-echo "  Airflow UI  → http://localhost:8081  (admin/admin)"
-echo "  MinIO       → http://localhost:9001  (minioadmin/minioadmin)"
+echo "  Airflow UI  → http://localhost:8081  (admin / admin)"
+echo "  MinIO       → http://localhost:9001  (minioadmin / minioadmin)"
+echo "  PostgreSQL  → localhost:5434         (parking_user / parking2024)"
+echo ""
 echo "  Ctrl+C pour tout arrêter."
 echo "============================================"
 
 trap "echo ''; echo '[INFO] Arrêt...'; kill $LOOP_PID 2>/dev/null; docker compose down; exit 0" INT TERM
 
-# Garde le script actif (les services tournent en Docker)
+# Garde le script actif jusqu'à Ctrl+C
 wait $LOOP_PID

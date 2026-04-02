@@ -2,6 +2,10 @@
 Data Lake MinIO — sauvegarde append-only des snapshots bruts dans MinIO (S3-compatible).
 Chaque objet est horodaté : <source>/<source>_YYYYMMDD_HHMMSS.json
 Rien n'est stocké sur le disque local.
+
+Comportement si MinIO est inaccessible :
+  - Toutes les fonctions d'écriture échouent silencieusement (log DEBUG).
+  - Le pipeline n'est pas interrompu.
 """
 import io
 import json
@@ -9,8 +13,9 @@ import re
 import logging
 import os
 from datetime import datetime, timezone
-from urllib3 import PoolManager
+from functools import lru_cache
 
+import urllib3
 import pandas as pd
 from minio import Minio
 from minio.error import S3Error
@@ -30,13 +35,30 @@ BUCKET_RAW       = os.getenv("MINIO_BUCKET_RAW",       "parkings-raw")
 BUCKET_PROCESSED = os.getenv("MINIO_BUCKET_PROCESSED", "parkings-processed")
 
 
+# ── Client MinIO (singleton léger) ────────────────────────────────────────────
+
 def _client() -> Minio:
-    # http_client sans retries pour ne pas bloquer le pipeline si MinIO est absent
-    http = PoolManager(num_pools=10, timeout=3.0, retries=False)
-    return Minio(_ENDPOINT, access_key=_ACCESS_KEY, secret_key=_SECRET_KEY, secure=_SECURE, http_client=http)
+    """Retourne un client MinIO avec timeout court et zéro retry.
+
+    Timeout : 1.5 s en connexion, 3 s en lecture.
+    Retries  : désactivés — échoue immédiatement si MinIO est absent,
+               ce qui évite les blocages de ~4 s en mode local sans Docker.
+    """
+    http = urllib3.PoolManager(
+        timeout=urllib3.Timeout(connect=1.5, read=3.0),
+        retries=urllib3.Retry(total=0, raise_on_redirect=False, read=False),
+    )
+    return Minio(
+        _ENDPOINT,
+        access_key=_ACCESS_KEY,
+        secret_key=_SECRET_KEY,
+        secure=_SECURE,
+        http_client=http,
+    )
 
 
 def _ensure_bucket(client: Minio, bucket: str) -> None:
+    """Crée le bucket s'il n'existe pas encore."""
     if not client.bucket_exists(bucket):
         client.make_bucket(bucket)
         logger.info("MinIO bucket créé : %s", bucket)
@@ -50,7 +72,9 @@ def _ts() -> str:
 
 def save_raw(data, source: str) -> str | None:
     """Upload un snapshot brut (dict ou list) dans MinIO sous <source>/<source>_ts.json.
-    Retourne la clé de l'objet ou None si MinIO est indisponible (non bloquant)."""
+
+    Retourne la clé de l'objet ou None si MinIO est indisponible (non bloquant).
+    """
     try:
         client = _client()
         _ensure_bucket(client, BUCKET_RAW)
@@ -65,13 +89,15 @@ def save_raw(data, source: str) -> str | None:
         logger.info("Data Lake MinIO [%s] → %s/%s", source, BUCKET_RAW, key)
         return key
     except Exception as exc:
-        logger.warning("Data Lake MinIO indisponible [%s] : %s", source, exc)
+        logger.debug("Data Lake MinIO indisponible [%s] : %s", source, exc)
         return None
 
 
 def save_processed(df: pd.DataFrame, name: str = "latest") -> str | None:
     """Upload le DataFrame transformé en CSV dans MinIO (bucket processed).
-    Retourne la clé ou None si MinIO est indisponible (non bloquant)."""
+
+    Retourne la clé ou None si MinIO est indisponible (non bloquant).
+    """
     try:
         client = _client()
         _ensure_bucket(client, BUCKET_PROCESSED)
@@ -86,13 +112,14 @@ def save_processed(df: pd.DataFrame, name: str = "latest") -> str | None:
         logger.info("Data Lake MinIO processed → %s/%s", BUCKET_PROCESSED, key)
         return key
     except Exception as exc:
-        logger.warning("Data Lake MinIO indisponible [processed] : %s", exc)
+        logger.debug("Data Lake MinIO indisponible [processed] : %s", exc)
         return None
 
 
 # ── Lecture ────────────────────────────────────────────────────────────────────
 
 def _filename_to_dt(key: str) -> datetime | None:
+    """Extrait le datetime UTC depuis un nom de fichier horodaté."""
     m = re.search(r"(\d{8}_\d{6})", key)
     if not m:
         return None
@@ -203,3 +230,35 @@ def load_parking_history(hours: int = 24) -> pd.DataFrame:
                     })
 
     return pd.DataFrame(rows) if rows else pd.DataFrame()
+
+
+# ── Introspection du Data Lake ─────────────────────────────────────────────────
+
+def list_objects(bucket: str) -> list[dict]:
+    """Liste les objets d'un bucket MinIO avec nom, taille et date de modification.
+
+    Lève une exception si MinIO est inaccessible (l'appelant gère l'affichage).
+    """
+    result = []
+    for obj in _client().list_objects(bucket, recursive=True):
+        result.append({
+            "key":        obj.object_name,
+            "taille":     f"{obj.size / 1024:.1f} Ko" if obj.size else "—",
+            "modifié le": obj.last_modified.strftime("%Y-%m-%d %H:%M")
+                          if obj.last_modified else "—",
+        })
+    return result
+
+
+def load_raw_preview(key: str, bucket: str | None = None) -> list | dict:
+    """Télécharge et parse un fichier JSON brut depuis MinIO.
+
+    Lève une exception si MinIO est inaccessible (l'appelant gère l'affichage).
+    """
+    bucket   = bucket or BUCKET_RAW
+    response = _client().get_object(bucket, key)
+    try:
+        return json.loads(response.read().decode("utf-8"))
+    finally:
+        response.close()
+        response.release_conn()

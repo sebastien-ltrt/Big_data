@@ -1,11 +1,22 @@
+# Ingestion & scraping
 requests>=2.31
-python-dotenv>=1.0
 beautifulsoup4>=4.12
 lxml>=5.0
+tenacity>=9.0
+
+# Transformation
 pandas>=2.2
+pytz>=2024.1
+
+# Stockage
 psycopg2-binary>=2.9
+minio>=7.2
+python-dotenv>=1.0
+
+# Dashboard
 streamlit>=1.35
 streamlit-autorefresh>=1.0
 plotly>=5.22
-pytz>=2024.1
-minio>=7.2
+
+# Spark (optionnel — nécessite Java 11+)
+# pyspark>=3.5

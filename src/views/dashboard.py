@@ -1,5 +1,5 @@
 """
-Dashboard Streamlit — Parkings Rennes
+View — Dashboard Streamlit Parkings Rennes
 Visualisation temps réel : 10 parkings centre-ville (Citedia) + 8 parcs-relais (STAR P+R)
 """
 import sys
@@ -32,7 +32,7 @@ st_autorefresh(interval=60_000, key="autorefresh")
 @st.cache_data(ttl=60)
 def load_parkings() -> pd.DataFrame:
     try:
-        from src.storage.warehouse import load_parkings_df
+        from src.models.warehouse import load_parkings_df
         df = load_parkings_df()
         if not df.empty:
             return df
@@ -47,26 +47,26 @@ def load_parkings() -> pd.DataFrame:
 @st.cache_data(ttl=60)
 def load_history() -> pd.DataFrame:
     try:
-        from src.storage.warehouse import load_availability_history
+        from src.models.warehouse import load_availability_history
         df = load_availability_history(24)
         if not df.empty:
             return df
     except Exception:
         pass
-    from src.storage.data_lake import load_parking_history
+    from src.models.data_lake import load_parking_history
     return load_parking_history(24)
 
 
 @st.cache_data(ttl=60)
 def load_weather_hist() -> pd.DataFrame:
     try:
-        from src.storage.warehouse import load_weather_history
+        from src.models.warehouse import load_weather_history
         df = load_weather_history(24)
         if not df.empty:
             return df
     except Exception:
         pass
-    from src.storage.data_lake import load_weather_history
+    from src.models.data_lake import load_weather_history
     return load_weather_history(24)
 
 
@@ -88,7 +88,7 @@ def color_status(rate):
 df = load_parkings()
 
 if df.empty:
-    st.error("Aucune donnée. Lancez `python src/pipeline.py`.")
+    st.error("Aucune donnée. Lancez `python -m src.controllers.pipeline`.")
     st.stop()
 
 df_cv = df[df["type"] == "Centre-ville"].copy()
@@ -119,10 +119,10 @@ with st.sidebar:
     # Météo dans la sidebar
     st.markdown("---")
     st.markdown("### 🌤 Météo Rennes")
-    temp  = df["temperature_c"].iloc[0]  if "temperature_c"      in df.columns else None
-    hum   = df["humidity_pct"].iloc[0]   if "humidity_pct"        in df.columns else None
-    wind  = df["wind_speed_kmh"].iloc[0] if "wind_speed_kmh"      in df.columns else None
-    desc  = df["weather_description"].iloc[0] if "weather_description" in df.columns else None
+    temp  = df["temperature_c"].iloc[0]       if "temperature_c"       in df.columns else None
+    hum   = df["humidity_pct"].iloc[0]        if "humidity_pct"         in df.columns else None
+    wind  = df["wind_speed_kmh"].iloc[0]      if "wind_speed_kmh"       in df.columns else None
+    desc  = df["weather_description"].iloc[0] if "weather_description"  in df.columns else None
     if temp is not None:
         st.metric("Température", f"{temp} °C")
         st.metric("Humidité",    f"{hum} %")
@@ -153,20 +153,20 @@ if "snapshot_time" in df.columns:
 # ── KPIs globaux ─────────────────────────────────────────────────────────────
 
 k1, k2, k3, k4, k5 = st.columns(5)
-k1.metric("🅿️ Parkings ouverts",   int(df["is_open"].sum()))
-k2.metric("✅ Places libres",       int(df["free_spaces"].sum()))
-k3.metric("🚗 Places occupées",     int(df["occupied_spaces"].sum()))
-k4.metric("⚠️ Parkings critiques",  int(df["is_critical"].sum()),
+k1.metric("🅿️ Parkings ouverts",  int(df["is_open"].sum()))
+k2.metric("✅ Places libres",      int(df["free_spaces"].sum()))
+k3.metric("🚗 Places occupées",    int(df["occupied_spaces"].sum()))
+k4.metric("⚠️ Parkings critiques", int(df["is_critical"].sum()),
           delta=f"{int(df['is_critical'].sum())} presque pleins", delta_color="inverse")
-k5.metric("🔴 Parkings complets",   int(df["is_full"].sum()),
+k5.metric("🔴 Parkings complets",  int(df["is_full"].sum()),
           delta_color="inverse")
 
 st.divider()
 
 # ── Onglets ───────────────────────────────────────────────────────────────────
 
-tab_carte, tab_cv, tab_pr, tab_trends, tab_meteo = st.tabs([
-    "🗺️ Carte", "🏙️ Centre-ville", "🚌 Parcs-Relais", "📈 Tendances 24h", "🌤️ Météo"
+tab_carte, tab_cv, tab_pr, tab_trends, tab_meteo, tab_lake = st.tabs([
+    "🗺️ Carte", "🏙️ Centre-ville", "🚌 Parcs-Relais", "📈 Tendances 24h", "🌤️ Météo", "🗄️ Data Lake"
 ])
 
 
@@ -192,14 +192,14 @@ with tab_carte:
             range_color=[0, 100],
             hover_name="name",
             hover_data={
-                "free_spaces":     ":.0f",
-                "total_spaces":    ":.0f",
-                "occupancy_rate":  ":.1f",
-                "type":            True,
-                "label_statut":    True,
-                "taille":          False,
-                "lat":             False,
-                "lon":             False,
+                "free_spaces":    ":.0f",
+                "total_spaces":   ":.0f",
+                "occupancy_rate": ":.1f",
+                "type":           True,
+                "label_statut":   True,
+                "taille":         False,
+                "lat":            False,
+                "lon":            False,
             },
             mapbox_style="open-street-map",
             zoom=12,
@@ -217,7 +217,6 @@ with tab_carte:
                               coloraxis_colorbar_title="Occupation %")
         st.plotly_chart(fig_map, use_container_width=True)
 
-        # Légende
         lc1, lc2, lc3 = st.columns(3)
         lc1.success("🟢 Disponible  (< 70%)")
         lc2.warning("🟡 Quasi-plein (70-90%)")
@@ -231,7 +230,6 @@ with tab_cv:
     if df_cv.empty:
         st.info("Aucune donnée centre-ville.")
     else:
-        # Jauges individuelles
         cols = st.columns(5)
         for i, (_, row) in enumerate(df_cv.iterrows()):
             rate  = float(row.get("occupancy_rate", 0) or 0)
@@ -245,7 +243,6 @@ with tab_cv:
 
         st.divider()
 
-        # Bar chart horizontal
         cv_sorted = df_cv.sort_values("free_spaces")
         fig_cv = px.bar(
             cv_sorted,
@@ -264,7 +261,6 @@ with tab_cv:
         fig_cv.update_layout(xaxis_range=[0, df_cv["total_spaces"].max() * 1.15])
         st.plotly_chart(fig_cv, use_container_width=True)
 
-        # Tableau récap
         st.dataframe(
             df_cv[["name", "free_spaces", "occupied_spaces", "total_spaces", "occupancy_rate", "status"]]
             .rename(columns={
@@ -283,7 +279,6 @@ with tab_pr:
     if df_pr.empty:
         st.info("Aucune donnée parc-relais.")
     else:
-        # Jauges
         cols_pr = st.columns(4)
         for i, (_, row) in enumerate(df_pr.iterrows()):
             rate  = float(row.get("occupancy_rate", 0) or 0)
@@ -313,7 +308,6 @@ with tab_pr:
         fig_pr.update_traces(texttemplate="%{text} places", textposition="outside")
         st.plotly_chart(fig_pr, use_container_width=True)
 
-        # Spécificités P+R
         st.subheader("Disponibilités spécifiques")
         sp1, sp2, sp3 = st.columns(3)
 
@@ -323,8 +317,7 @@ with tab_pr:
             if not ev.empty:
                 fig_ev = px.bar(ev, x="name", y=["free_ev", "total_ev"],
                                 barmode="overlay", color_discrete_sequence=["#2ecc71", "#bdc3c7"],
-                                labels={"value": "Places", "name": "Parc"},
-                                height=280)
+                                labels={"value": "Places", "name": "Parc"}, height=280)
                 fig_ev.update_layout(showlegend=False, margin={"t": 10})
                 st.plotly_chart(fig_ev, use_container_width=True)
             else:
@@ -336,8 +329,7 @@ with tab_pr:
             if not cp.empty:
                 fig_cp = px.bar(cp, x="name", y=["free_carpool", "total_carpool"],
                                 barmode="overlay", color_discrete_sequence=["#3498db", "#bdc3c7"],
-                                labels={"value": "Places", "name": "Parc"},
-                                height=280)
+                                labels={"value": "Places", "name": "Parc"}, height=280)
                 fig_cp.update_layout(showlegend=False, margin={"t": 10})
                 st.plotly_chart(fig_cp, use_container_width=True)
             else:
@@ -349,8 +341,7 @@ with tab_pr:
             if not pmr.empty:
                 fig_pmr = px.bar(pmr, x="name", y=["free_pmr", "total_pmr"],
                                  barmode="overlay", color_discrete_sequence=["#9b59b6", "#bdc3c7"],
-                                 labels={"value": "Places", "name": "Parc"},
-                                 height=280)
+                                 labels={"value": "Places", "name": "Parc"}, height=280)
                 fig_pmr.update_layout(showlegend=False, margin={"t": 10})
                 st.plotly_chart(fig_pmr, use_container_width=True)
             else:
@@ -367,7 +358,6 @@ with tab_trends:
         hist = hist.copy()
         hist["snapshot_time"] = to_paris(hist["snapshot_time"])
 
-        # Courbe globale places libres
         avg = hist.groupby("snapshot_time", as_index=False)["free_spaces"].mean()
         avg["free_spaces"] = avg["free_spaces"].round(0)
 
@@ -398,7 +388,6 @@ with tab_trends:
         )
         st.plotly_chart(fig_global, use_container_width=True)
 
-        # Détail par parking
         st.subheader("Détail par parking")
         if "parking_id" in hist.columns and "name" in df.columns:
             names = df[["parking_id", "name"]].drop_duplicates()
@@ -414,7 +403,6 @@ with tab_trends:
             )
             st.plotly_chart(fig_sub, use_container_width=True)
 
-        # Heatmap taux d'occupation
         if "occupancy_rate" in hist.columns and "parking_id" in hist.columns:
             st.subheader("Heatmap — taux d'occupation par parking")
             pivot = hist.merge(df[["parking_id", "name"]].drop_duplicates(), on="parking_id", how="left")
@@ -441,10 +429,10 @@ with tab_meteo:
         last_w = wh.iloc[-1]
 
         wm1, wm2, wm3, wm4 = st.columns(4)
-        wm1.metric("🌡️ Température",  f"{last_w.get('temperature_c','—')} °C")
-        wm2.metric("💧 Humidité",     f"{last_w.get('humidity_pct','—')} %")
-        wm3.metric("💨 Vent",         f"{last_w.get('wind_speed_kmh','—')} km/h")
-        wm4.metric("🌤️ Ciel",         str(last_w.get("weather_description","—")))
+        wm1.metric("🌡️ Température", f"{last_w.get('temperature_c', '—')} °C")
+        wm2.metric("💧 Humidité",    f"{last_w.get('humidity_pct', '—')} %")
+        wm3.metric("💨 Vent",        f"{last_w.get('wind_speed_kmh', '—')} km/h")
+        wm4.metric("🌤️ Ciel",        str(last_w.get("weather_description", "—")))
 
         st.divider()
 
@@ -475,3 +463,64 @@ with tab_meteo:
             st.plotly_chart(fig_w, use_container_width=True)
     else:
         st.info("Pas encore d'historique météo. Relancez le pipeline.")
+
+
+# ── DATA LAKE ─────────────────────────────────────────────────────────────────
+with tab_lake:
+    st.subheader("🗄️ Data Lake — MinIO")
+    st.caption("Buckets S3-compatibles : snapshots bruts (JSON) et données transformées (CSV/Parquet).")
+
+    try:
+        from src.models.data_lake import list_objects, load_raw_preview, BUCKET_RAW, BUCKET_PROCESSED
+
+        col_raw, col_proc = st.columns(2)
+
+        with col_raw:
+            st.markdown(f"**Bucket `{BUCKET_RAW}`**")
+            try:
+                objects_raw = list_objects(BUCKET_RAW)
+            except Exception:
+                objects_raw = []
+
+            if objects_raw:
+                df_raw_objects = pd.DataFrame(objects_raw)
+                st.dataframe(df_raw_objects, use_container_width=True, hide_index=True)
+
+                selected = st.selectbox(
+                    "Prévisualiser un fichier (5 premières entrées)",
+                    options=[o["key"] for o in objects_raw],
+                    key="lake_raw_select",
+                )
+                if selected:
+                    try:
+                        preview = load_raw_preview(selected)
+                        st.json(preview[:5] if isinstance(preview, list) else preview)
+                    except Exception as exc:
+                        st.error(f"Impossible de charger le fichier : {exc}")
+            else:
+                st.info("Aucun fichier dans ce bucket.")
+
+        with col_proc:
+            st.markdown(f"**Bucket `{BUCKET_PROCESSED}`**")
+            try:
+                objects_proc = list_objects(BUCKET_PROCESSED)
+            except Exception:
+                objects_proc = []
+
+            if objects_proc:
+                st.dataframe(pd.DataFrame(objects_proc), use_container_width=True, hide_index=True)
+            else:
+                st.info("Aucun fichier traité.")
+
+        st.markdown("---")
+        st.caption(
+            "Console MinIO → [http://localhost:9001](http://localhost:9001) "
+            "(minioadmin / minioadmin)"
+        )
+
+    except Exception as e:
+        st.warning(
+            f"MinIO non disponible en mode local. "
+            f"Lancez `docker compose up minio -d` pour accéder au Data Lake.\n\n"
+            f"Détail : `{e}`"
+        )

@@ -1,5 +1,5 @@
 """
-Ingestion — API Citedia
+Controller — Ingestion API Citedia
 10 parkings en ouvrage du centre-ville de Rennes.
 Endpoints :
   GET /r1/parks        → liste + infos de chaque parking
@@ -14,8 +14,8 @@ from pathlib import Path
 import requests
 from dotenv import load_dotenv
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from src.storage.data_lake import save_raw
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+from src.models.data_lake import save_raw
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -33,11 +33,11 @@ def fetch_parks_detail() -> list[dict]:
     for item in data.get("parks", []):
         info = item.get("parkInformation", {})
         parks.append({
-            "id":     item.get("id"),
-            "name":   info.get("name"),
-            "status": info.get("status"),
-            "max":    info.get("max", 0),
-            "free":   info.get("free", 0),
+            "id":         item.get("id"),
+            "name":       info.get("name"),
+            "status":     info.get("status"),
+            "max":        info.get("max", 0),
+            "free":       info.get("free", 0),
             "fetched_at": datetime.now(timezone.utc).isoformat(),
         })
     logger.info("Citedia — %d parkings récupérés", len(parks))

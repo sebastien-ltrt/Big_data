@@ -1,5 +1,5 @@
 """
-Ingestion — API STAR Rennes Métropole
+Controller — Ingestion API STAR Rennes Métropole
 Datasets :
   tco-parcsrelais-star-etat-tr      → disponibilité temps réel (8 parcs-relais P+R)
   tco-parcsrelais-star-topologie-td → topologie / adresses
@@ -12,15 +12,15 @@ from pathlib import Path
 import requests
 from dotenv import load_dotenv
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from src.storage.data_lake import save_raw
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+from src.models.data_lake import save_raw
 
 load_dotenv()
 logger = logging.getLogger(__name__)
 
-BASE_URL = os.getenv("STAR_API_BASE_URL", "https://data.explore.star.fr/api/explore/v2.1")
-DATASET_REALTIME  = "tco-parcsrelais-star-etat-tr"
-DATASET_TOPOLOGY  = "tco-parcsrelais-star-topologie-td"
+BASE_URL         = os.getenv("STAR_API_BASE_URL", "https://data.explore.star.fr/api/explore/v2.1")
+DATASET_REALTIME = "tco-parcsrelais-star-etat-tr"
+DATASET_TOPOLOGY = "tco-parcsrelais-star-topologie-td"
 
 
 def _fetch_dataset(dataset: str) -> list[dict]:

@@ -34,23 +34,23 @@ def parkings_pipeline():
 
     @task(task_id="fetch_citedia")
     def fetch_citedia() -> list:
-        from src.ingestion.fetch_citedia import run_ingestion_citedia
+        from src.controllers.ingestion.citedia import run_ingestion_citedia
         return run_ingestion_citedia()
 
     @task(task_id="fetch_star")
     def fetch_star() -> dict:
-        from src.ingestion.fetch_star import run_ingestion_star
+        from src.controllers.ingestion.star import run_ingestion_star
         return run_ingestion_star()
 
     @task(task_id="scrape_weather")
     def scrape_weather() -> dict:
-        from src.ingestion.scrape_weather import run_scraping
+        from src.controllers.ingestion.weather import run_scraping
         return run_scraping()
 
     @task(task_id="transform")
     def transform(citedia: list, star: dict, weather: dict) -> list:
-        from src.processing.transform import run_transform
-        from src.storage.data_lake import save_processed
+        from src.controllers.transform import run_transform
+        from src.models.data_lake import save_processed
         df = run_transform(citedia, star, weather)
         save_processed(df, name="latest")
         return df.to_dict("records")
@@ -58,14 +58,14 @@ def parkings_pipeline():
     @task(task_id="load_warehouse")
     def load_warehouse(records: list) -> None:
         import pandas as pd
-        from src.storage.warehouse import upsert_parkings, insert_availability
+        from src.models.warehouse import upsert_parkings, insert_availability
         df = pd.DataFrame(records)
         upsert_parkings(df)
         insert_availability(df)
 
     @task(task_id="load_weather")
     def load_weather(weather: dict) -> None:
-        from src.storage.warehouse import insert_weather
+        from src.models.warehouse import insert_weather
         insert_weather(weather)
 
     # Flux

@@ -139,3 +139,38 @@ docker compose up -d
 sudo sed -i 's/ident/md5/g' /var/lib/pgsql/data/pg_hba.conf
 sudo systemctl restart postgresql
 ```
+
+---
+
+## Job Spark — Agrégations horaires
+
+### Prérequis
+- Java 11 ou 17 installé (`java -version`)
+- PySpark : `pip install pyspark>=3.5`
+- MinIO accessible (Docker lancé : `docker compose up minio -d`)
+
+### Lancer le job
+
+```bash
+source venv/bin/activate
+spark-submit \
+  --packages org.apache.hadoop:hadoop-aws:3.3.4,org.apache.hadoop:hadoop-common:3.3.4,com.amazonaws:aws-java-sdk-bundle:1.12.262 \
+  spark_jobs/transform_parking.py
+```
+
+### Ce que fait le job
+- Lit tous les snapshots JSON bruts dans `parkings-raw/citedia/` et `parkings-raw/star/`
+- Calcule des agrégations **par parking par heure** : moyenne / min / max des places libres, taux d'occupation moyen
+- Ajoute une **moyenne mobile sur 3h** (window function Spark)
+- Écrit les résultats en **Parquet partitionné** dans MinIO :
+
+```
+parkings-processed/hourly_aggregations/
+  date=YYYY-MM-DD/
+    source=citedia/   ← fichiers .parquet
+    source=star/      ← fichiers .parquet
+```
+
+### Consulter les résultats
+Console MinIO → http://localhost:9001 (minioadmin / minioadmin)
+→ bucket `parkings-processed` → dossier `hourly_aggregations/`

@@ -1,5 +1,5 @@
 """
-Pipeline principal — Parkings Rennes
+Controller — Pipeline principal Parkings Rennes
 Ingestion API Citedia + STAR → Scraping météo → Transform → Data Lake → PostgreSQL
 """
 import logging
@@ -7,14 +7,15 @@ import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 
-def setup_logging():
+def setup_logging() -> None:
+    """Configure les handlers de log (fichier rotatif + stdout)."""
     Path("logs").mkdir(exist_ok=True)
     fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s — %(message)s")
     handlers = [
-        RotatingFileHandler("logs/pipeline.log", maxBytes=5*1024*1024, backupCount=3),
+        RotatingFileHandler("logs/pipeline.log", maxBytes=5 * 1024 * 1024, backupCount=3),
         logging.StreamHandler(sys.stdout),
     ]
     for h in handlers:
@@ -22,7 +23,8 @@ def setup_logging():
     logging.basicConfig(level=logging.INFO, handlers=handlers)
 
 
-def run():
+def run() -> None:
+    """Exécute une itération complète du pipeline ETL."""
     setup_logging()
     logger = logging.getLogger("pipeline")
     logger.info("=" * 60)
@@ -30,30 +32,30 @@ def run():
 
     # 1. Ingestion API Citedia
     logger.info("Étape 1/5 — Ingestion API Citedia (parkings centre-ville)")
-    from src.ingestion.fetch_citedia import run_ingestion_citedia
+    from src.controllers.ingestion.citedia import run_ingestion_citedia
     citedia = run_ingestion_citedia()
 
     # 2. Ingestion API STAR
     logger.info("Étape 2/5 — Ingestion API STAR (parcs-relais P+R)")
-    from src.ingestion.fetch_star import run_ingestion_star
+    from src.controllers.ingestion.star import run_ingestion_star
     star = run_ingestion_star()
 
     # 3. Scraping météo
     logger.info("Étape 3/5 — Scraping météo (wttr.in)")
-    from src.ingestion.scrape_weather import run_scraping
+    from src.controllers.ingestion.weather import run_scraping
     weather = run_scraping()
 
     # 4. Transformation
     logger.info("Étape 4/5 — Transformation et enrichissement")
-    from src.processing.transform import run_transform
-    from src.storage.data_lake import save_processed
+    from src.controllers.transform import run_transform
+    from src.models.data_lake import save_processed
     df = run_transform(citedia, star, weather)
     save_processed(df, name="latest")
 
     # 5. Chargement PostgreSQL
     logger.info("Étape 5/5 — Chargement PostgreSQL")
     try:
-        from src.storage.warehouse import upsert_parkings, insert_availability, insert_weather
+        from src.models.warehouse import upsert_parkings, insert_availability, insert_weather
         upsert_parkings(df)
         insert_availability(df)
         insert_weather(weather)

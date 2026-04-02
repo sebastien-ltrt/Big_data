@@ -24,7 +24,7 @@ def main():
     logger.info("Pipeline en boucle — intervalle : %ds. Ctrl+C pour arrêter.", INTERVAL)
     while True:
         try:
-            from src.pipeline import run
+            from src.controllers.pipeline import run
             run()
         except Exception as exc:
             logger.error("Erreur pipeline : %s", exc)
