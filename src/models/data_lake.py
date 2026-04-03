@@ -86,7 +86,7 @@ def save_raw(data, source: str) -> str | None:
         client.put_object(
             BUCKET_RAW, key, buf, length=len(content), content_type="application/json"
         )
-        logger.info("Data Lake MinIO [%s] → %s/%s", source, BUCKET_RAW, key)
+        logger.info("Data Lake MinIO [%s] -> %s/%s", source, BUCKET_RAW, key)
         return key
     except Exception as exc:
         logger.debug("Data Lake MinIO indisponible [%s] : %s", source, exc)
@@ -109,7 +109,7 @@ def save_processed(df: pd.DataFrame, name: str = "latest") -> str | None:
         client.put_object(
             BUCKET_PROCESSED, key, buf, length=len(content), content_type="text/csv"
         )
-        logger.info("Data Lake MinIO processed → %s/%s", BUCKET_PROCESSED, key)
+        logger.info("Data Lake MinIO processed -> %s/%s", BUCKET_PROCESSED, key)
         return key
     except Exception as exc:
         logger.debug("Data Lake MinIO indisponible [processed] : %s", exc)

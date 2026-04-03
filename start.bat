@@ -1,6 +1,6 @@
 @echo off
 :: ============================================================
-:: start.bat — Lance tout le stack (Docker + pipeline + dashboard)
+:: start.bat - Lance tout le stack (Docker + pipeline + dashboard)
 :: Usage : double-clic ou start.bat dans un terminal
 :: ============================================================
 
@@ -11,15 +11,15 @@ echo ============================================
 echo   Parkings Rennes - Demarrage complet
 echo ============================================
 
-:: ── 0. Fichier .env ────────────────────────────────────────
+:: -- 0. Fichier .env ----------------------------------------
 if not exist ".env" (
     echo.
     echo [INFO] .env absent - copie depuis .env.example...
     copy ".env.example" ".env" >nul
-    echo [INFO] .env cree. Valeurs par defaut utilisees (compatibles Docker).
+    echo [INFO] .env cree. Valeurs par defaut utilisees ^(compatibles Docker^).
 )
 
-:: ── 1. Docker Compose ──────────────────────────────────────
+:: -- 1. Docker Compose --------------------------------------
 echo.
 echo [1/4] Demarrage des services Docker (MinIO, PostgreSQL, Airflow)...
 docker compose up --build -d
@@ -32,7 +32,7 @@ if errorlevel 1 (
 echo [INFO] Attente que les services soient prets (20s)...
 timeout /t 20 /nobreak >nul
 
-:: ── 2. Environnement Python ────────────────────────────────
+:: -- 2. Environnement Python --------------------------------
 echo.
 echo [2/4] Preparation de l'environnement Python...
 if not exist "venv\Scripts\activate.bat" (
@@ -44,7 +44,7 @@ if not exist "venv\Scripts\activate.bat" (
     call venv\Scripts\activate.bat
 )
 
-:: ── 3. Premier run du pipeline ─────────────────────────────
+:: -- 3. Premier run du pipeline -----------------------------
 echo.
 echo [3/4] Lancement du pipeline initial...
 python -m src.controllers.pipeline
@@ -52,13 +52,13 @@ if errorlevel 1 (
     echo [AVERTISSEMENT] Le pipeline a rencontre une erreur. Verification des logs...
 )
 
-:: ── 4. Pipeline en boucle en arriere-plan ──────────────────
+:: -- 4. Pipeline en boucle en arriere-plan ------------------
 echo.
 echo [4/4] Pipeline en boucle (toutes les 5 min) en arriere-plan...
 if not exist "logs" mkdir logs
 start "Pipeline Loop" /min cmd /c "call venv\Scripts\activate.bat && python run_pipeline_loop.py 300 >> logs\pipeline_loop.log 2>&1"
 
-:: ── Acces ───────────────────────────────────────────────────
+:: -- Acces ---------------------------------------------------
 echo.
 echo ============================================
 echo   Tout est lance !
