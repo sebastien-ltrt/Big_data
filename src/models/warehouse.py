@@ -89,7 +89,8 @@ def load_parkings_df() -> pd.DataFrame:
                a.free_spaces, a.occupied_spaces, a.occupancy_rate,
                a.is_open, a.is_critical, a.is_full, a.status,
                a.free_ev, a.free_carpool, a.free_pmr,
-               a.snapshot_time, a.temperature_c, a.weather_desc
+               a.snapshot_time, a.temperature_c, a.humidity_pct,
+               a.wind_speed_kmh, a.weather_desc AS weather_description
         FROM parkings p
         LEFT JOIN LATERAL (
             SELECT * FROM availability_snapshots
