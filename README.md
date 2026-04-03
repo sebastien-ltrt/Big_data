@@ -61,15 +61,15 @@ Pipeline Big Data complet pour visualiser la disponibilité en temps réel des p
 
 ## Sources de données & APIs
 
-| Source | Type | Clé API | Lien | Données |
-|---|---|---|---|---|
-| **Citedia** | API REST JSON | ❌ Aucune (publique) | http://data.citedia.com/r1/parks | 10 parkings centre-ville — places libres, statut |
-| **STAR Open Data** | API REST JSON | ❌ Aucune (publique) | https://data.explore.star.fr/api/explore/v2.1 | 8 parcs-relais P+R — places EV, covoiturage, PMR |
-| **wttr.in** | JSON / Scraping HTML | ❌ Aucune (publique) | https://wttr.in/Rennes?format=j1 | Météo Rennes — température, humidité, vent |
-| **Open-Meteo** | API REST JSON | ❌ Aucune (publique) | https://api.open-meteo.com/v1/forecast | Météo fallback — température, humidité, vent, code météo |
-| **Nominatim (OSM)** | API REST JSON | ❌ Aucune (publique) | https://nominatim.openstreetmap.org/search | Géocodage d'adresses (recherche parking le plus proche) |
+Toutes les APIs utilisées sont **libres d'accès, sans clé API requise**.
 
-> Toutes les APIs utilisées dans ce projet sont **libres d'accès et sans clé API**.
+| Source | Type | Lien | Données |
+|---|---|---|---|
+| **Citedia** | API REST JSON | http://data.citedia.com/r1/parks | 10 parkings centre-ville — places libres, statut |
+| **STAR Open Data** | API REST JSON | https://data.explore.star.fr/api/explore/v2.1 | 8 parcs-relais P+R — places EV, covoiturage, PMR |
+| **Open-Meteo** ⭐ | API REST JSON | https://api.open-meteo.com/v1/forecast | Météo principale — température, humidité, vent, code WMO |
+| **wttr.in** | API REST JSON | https://wttr.in/Rennes?format=j1 | Météo fallback si Open-Meteo indisponible |
+| **Nominatim (OSM)** | API REST JSON | https://nominatim.openstreetmap.org/search | Géocodage pour la recherche « parking le plus proche » |
 
 ---
 
@@ -105,7 +105,7 @@ lance un premier run du pipeline, puis boucle toutes les 5 minutes.
 
 | Service | URL | Identifiants |
 |---|---|---|
-| Dashboard Streamlit | http://localhost:8501 | — |
+| 🗺️ Carte interactive parkings | http://localhost:8501 | — |
 | Airflow UI | http://localhost:8081 | admin / admin |
 | MinIO Console | http://localhost:9001 | minioadmin / minioadmin |
 | PostgreSQL | localhost:**5434** | parking_user / parking2024 |
