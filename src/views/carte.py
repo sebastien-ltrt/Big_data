@@ -3,10 +3,12 @@ Carte interactive — Parkings de Rennes
 Interface dédiée : disponibilité temps réel avec code couleur vert / jaune / rouge
 Lancement : streamlit run src/views/carte.py
 """
+import math
 import sys
 from pathlib import Path
 
 import pytz
+import requests
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
@@ -266,6 +268,35 @@ for col, color, val, label in kpis:
 
 st.markdown("<div style='margin:6px 0'></div>", unsafe_allow_html=True)
 
+# ── Recherche de lieu ─────────────────────────────────────────────────────────
+
+def geocode(query: str) -> tuple[float, float] | None:
+    """Geocode une adresse via Nominatim (OpenStreetMap, sans clé API)."""
+    try:
+        r = requests.get(
+            "https://nominatim.openstreetmap.org/search",
+            params={"q": query, "format": "json", "limit": 1, "countrycodes": "fr"},
+            headers={"User-Agent": "ParkingsRennes/1.0"},
+            timeout=5,
+        )
+        data = r.json()
+        if data:
+            return float(data[0]["lat"]), float(data[0]["lon"])
+    except Exception:
+        pass
+    return None
+
+
+def haversine(lat1, lon1, lat2, lon2) -> float:
+    """Distance en mètres entre deux coordonnées GPS."""
+    R = 6_371_000
+    φ1, φ2 = math.radians(lat1), math.radians(lat2)
+    dφ = math.radians(lat2 - lat1)
+    dλ = math.radians(lon2 - lon1)
+    a = math.sin(dφ / 2) ** 2 + math.cos(φ1) * math.cos(φ2) * math.sin(dλ / 2) ** 2
+    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+
 # ── Carte ─────────────────────────────────────────────────────────────────────
 
 map_filtered = map_df.copy()
@@ -276,6 +307,73 @@ if show_only_open:
 if show_only_avail:
     map_filtered = map_filtered[~map_filtered["is_full"]]
 map_filtered = map_filtered.reset_index(drop=True)
+
+# ── Recherche de lieu ─────────────────────────────────────────────────────────
+
+with st.expander("🔍 Trouver le parking le plus proche", expanded=False):
+    search_query = st.text_input("Adresse ou lieu à Rennes", placeholder="Ex : Gare de Rennes, rue de la Paix...")
+    if search_query:
+        coords = geocode(search_query + ", Rennes")
+        if coords is None:
+            coords = geocode(search_query)
+        if coords is None:
+            st.error("Adresse introuvable. Essayez d'être plus précis.")
+        else:
+            slat, slon = coords
+            pool = map_filtered.copy()
+            avail = pool[pool["is_open"] & ~pool["is_full"]]
+            pool = avail if not avail.empty else pool
+            pool = pool.copy()
+            pool["distance_m"] = pool.apply(
+                lambda r: haversine(slat, slon, r["lat"], r["lon"]), axis=1
+            )
+            pool = pool.sort_values("distance_m").reset_index(drop=True)
+            best = pool.iloc[0]
+            dist = int(best["distance_m"])
+            hex_c = best["hex_color"]
+
+            st.markdown(
+                f"""
+                <div style="background:#1a1d27;border-left:5px solid {hex_c};
+                            border-radius:10px;padding:14px 16px;margin:8px 0">
+                    <div style="font-size:1.05rem;font-weight:700;color:#fff">
+                        📍 {best['name']}
+                        <span style="font-size:0.75rem;color:{hex_c};margin-left:8px">
+                            {best['label_statut']}
+                        </span>
+                    </div>
+                    <div style="color:#8899aa;font-size:0.82rem;margin-top:4px">
+                        À <b style="color:#fff">{dist} m</b> de votre point de recherche ·
+                        <b style="color:{hex_c}">{int(best['free_spaces'])} places libres</b>
+                        / {int(best['total_spaces'])}
+                        ({best['occupancy_rate']:.0f}% occupé)
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+            if len(pool) > 1:
+                st.markdown("**Les 3 parkings les plus proches :**")
+                cols_near = st.columns(3)
+                for i, (_, row) in enumerate(pool.head(3).iterrows()):
+                    with cols_near[i]:
+                        st.markdown(
+                            f"""<div style="background:#22263a;border-radius:8px;
+                                           padding:10px;border-top:3px solid {row['hex_color']}">
+                                <div style="font-weight:700;font-size:0.82rem;color:#fff">
+                                    {row['name']}
+                                </div>
+                                <div style="color:{row['hex_color']};font-size:1.2rem;font-weight:800">
+                                    {int(row['free_spaces'])}
+                                    <span style="color:#8899aa;font-size:0.75rem">places libres</span>
+                                </div>
+                                <div style="color:#8899aa;font-size:0.72rem">
+                                    {int(row['distance_m'])} m · {row['occupancy_rate']:.0f}% occupé
+                                </div>
+                            </div>""",
+                            unsafe_allow_html=True,
+                        )
 
 if map_filtered.empty:
     st.info("Aucun parking à afficher avec les filtres sélectionnés.")

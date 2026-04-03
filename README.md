@@ -59,13 +59,17 @@ Pipeline Big Data complet pour visualiser la disponibilité en temps réel des p
 
 ---
 
-## Sources de données
+## Sources de données & APIs
 
-| Source | Type | Données |
-|---|---|---|
-| [API Citedia](http://data.citedia.com/r1/parks) | API REST JSON | 10 parkings en ouvrage du centre-ville — places libres, statut |
-| [API STAR](https://data.explore.star.fr/api/explore/v2.1) | API REST JSON | 8 parcs-relais P+R — places EV, covoiturage, PMR |
-| [wttr.in/Rennes](https://wttr.in/Rennes) | Scraping HTML/JSON | Météo Rennes — température, humidité, vent |
+| Source | Type | Clé API | Lien | Données |
+|---|---|---|---|---|
+| **Citedia** | API REST JSON | ❌ Aucune (publique) | http://data.citedia.com/r1/parks | 10 parkings centre-ville — places libres, statut |
+| **STAR Open Data** | API REST JSON | ❌ Aucune (publique) | https://data.explore.star.fr/api/explore/v2.1 | 8 parcs-relais P+R — places EV, covoiturage, PMR |
+| **wttr.in** | JSON / Scraping HTML | ❌ Aucune (publique) | https://wttr.in/Rennes?format=j1 | Météo Rennes — température, humidité, vent |
+| **Open-Meteo** | API REST JSON | ❌ Aucune (publique) | https://api.open-meteo.com/v1/forecast | Météo fallback — température, humidité, vent, code météo |
+| **Nominatim (OSM)** | API REST JSON | ❌ Aucune (publique) | https://nominatim.openstreetmap.org/search | Géocodage d'adresses (recherche parking le plus proche) |
+
+> Toutes les APIs utilisées dans ce projet sont **libres d'accès et sans clé API**.
 
 ---
 
