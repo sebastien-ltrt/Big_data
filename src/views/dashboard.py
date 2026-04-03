@@ -313,7 +313,10 @@ with tab_pr:
 
         with sp1:
             st.markdown("**⚡ Véhicules électriques**")
-            ev = df_pr[df_pr["total_ev"].fillna(0) > 0][["name", "free_ev", "total_ev"]]
+            if "total_ev" in df_pr.columns and "free_ev" in df_pr.columns:
+                ev = df_pr[df_pr["total_ev"].fillna(0) > 0][["name", "free_ev", "total_ev"]]
+            else:
+                ev = pd.DataFrame()
             if not ev.empty:
                 fig_ev = px.bar(ev, x="name", y=["free_ev", "total_ev"],
                                 barmode="overlay", color_discrete_sequence=["#2ecc71", "#bdc3c7"],
@@ -325,7 +328,10 @@ with tab_pr:
 
         with sp2:
             st.markdown("**🚗 Covoiturage**")
-            cp = df_pr[df_pr["total_carpool"].fillna(0) > 0][["name", "free_carpool", "total_carpool"]]
+            if "total_carpool" in df_pr.columns and "free_carpool" in df_pr.columns:
+                cp = df_pr[df_pr["total_carpool"].fillna(0) > 0][["name", "free_carpool", "total_carpool"]]
+            else:
+                cp = pd.DataFrame()
             if not cp.empty:
                 fig_cp = px.bar(cp, x="name", y=["free_carpool", "total_carpool"],
                                 barmode="overlay", color_discrete_sequence=["#3498db", "#bdc3c7"],
@@ -337,7 +343,10 @@ with tab_pr:
 
         with sp3:
             st.markdown("**♿ PMR**")
-            pmr = df_pr[df_pr["total_pmr"].fillna(0) > 0][["name", "free_pmr", "total_pmr"]]
+            if "total_pmr" in df_pr.columns and "free_pmr" in df_pr.columns:
+                pmr = df_pr[df_pr["total_pmr"].fillna(0) > 0][["name", "free_pmr", "total_pmr"]]
+            else:
+                pmr = pd.DataFrame()
             if not pmr.empty:
                 fig_pmr = px.bar(pmr, x="name", y=["free_pmr", "total_pmr"],
                                  barmode="overlay", color_discrete_sequence=["#9b59b6", "#bdc3c7"],
