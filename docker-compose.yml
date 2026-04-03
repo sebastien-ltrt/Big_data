@@ -111,7 +111,7 @@ services:
       airflow-init:
         condition: service_completed_successfully
 
-  # Dashboard Streamlit
+  # Dashboard Streamlit complet (6 onglets)
   streamlit:
     build:
       context: .
@@ -130,6 +130,34 @@ services:
       MINIO_SECURE: "false"
     ports:
       - "8501:8501"
+    depends_on:
+      postgres-parkings:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Carte interactive (interface dédiée vert/jaune/rouge)
+  streamlit-carte:
+    build:
+      context: .
+      dockerfile: Dockerfile.streamlit
+    command: ["streamlit", "run", "src/views/carte.py",
+              "--server.port=8502", "--server.address=0.0.0.0", "--server.headless=true"]
+    environment:
+      PG_HOST: postgres-parkings
+      PG_PORT: 5432
+      PG_DB: parkings_rennes
+      PG_USER: parking_user
+      PG_PASSWORD: parking2024
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      MINIO_BUCKET_RAW: parkings-raw
+      MINIO_BUCKET_PROCESSED: parkings-processed
+      MINIO_SECURE: "false"
+    ports:
+      - "8502:8502"
     depends_on:
       postgres-parkings:
         condition: service_healthy
